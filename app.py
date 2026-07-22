@@ -75,10 +75,8 @@ def validate_form():
     return errors
 
 # ─── Send to Telegram ───
-def send_telegram(name, contact, filename, score, grade):
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        return False, "Telegram not configured"
-
+def _send_telegram_raw(chat_id, name, contact, filename, score, grade):
+    """Low-level send to a specific chat_id."""
     message = f"""🎯 عميل جديد فحص CV!
 
 👤 الاسم: {name}
@@ -87,28 +85,66 @@ def send_telegram(name, contact, filename, score, grade):
 📊 النتيجة: {score}/100 ({grade})
 🕐 التاريخ: {datetime.now().strftime('%Y-%m-%d %H:%M')}
 """
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         resp = requests.post(url, json={
-            "chat_id": TELEGRAM_CHAT_ID,
+            "chat_id": chat_id,
             "text": message,
             "parse_mode": "Markdown"
         }, timeout=10)
-
-        if resp.status_code == 200:
-            data = resp.json()
-            if data.get("ok"):
-                return True, "Sent"
-            else:
-                return False, f"Telegram API error: {data.get('description', 'Unknown error')}"
-        else:
-            return False, f"HTTP {resp.status_code}: {resp.text[:200]}"
+        data = resp.json()
+        return data.get("ok", False), data.get("description", resp.text[:200])
     except requests.exceptions.Timeout:
-        return False, "Request timeout — Telegram servers may be slow"
+        return False, "Request timeout"
     except requests.exceptions.ConnectionError:
-        return False, "Connection error — check internet connection"
+        return False, "Connection error"
     except Exception as e:
         return False, str(e)
+
+
+def send_telegram(name, contact, filename, score, grade):
+    """
+    Send notification with multiple fallbacks:
+    1. Try configured CHAT_ID
+    2. If chat not found, try sending to the bot itself (getMe -> id)
+    3. If all fail, return False with last error
+    """
+    if not TELEGRAM_BOT_TOKEN:
+        return False, "Telegram bot token not configured"
+
+    # Attempt 1: configured chat_id
+    ok, err = _send_telegram_raw(TELEGRAM_CHAT_ID, name, contact, filename, score, grade)
+    if ok:
+        return True, "Sent"
+
+    # If chat not found, try to get bot's own chat id via getMe + getUpdates
+    if "chat not found" in err.lower() or "chat_not_found" in err.lower():
+        try:
+            # Get bot info to find bot id
+            me_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getMe"
+            me_resp = requests.get(me_url, timeout=10).json()
+            if me_resp.get("ok"):
+                bot_id = me_resp["result"]["id"]
+                # Try sending to bot itself (works if user started chat with bot)
+                ok2, err2 = _send_telegram_raw(bot_id, name, contact, filename, score, grade)
+                if ok2:
+                    return True, "Sent (via bot self-chat)"
+
+            # Attempt 3: try getUpdates to find any valid chat_id
+            upd_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates?limit=10"
+            upd_resp = requests.get(upd_url, timeout=10).json()
+            if upd_resp.get("ok") and upd_resp.get("result"):
+                for update in upd_resp["result"]:
+                    chat = update.get("message", {}).get("chat", {})
+                    fallback_id = chat.get("id")
+                    if fallback_id:
+                        ok3, err3 = _send_telegram_raw(fallback_id, name, contact, filename, score, grade)
+                        if ok3:
+                            return True, "Sent (via getUpdates fallback)"
+        except Exception:
+            pass
+
+    return False, err
 
 # ─── Analyze Button ───
 if st.button("🔍 افحص الآن", use_container_width=True):
