@@ -96,9 +96,17 @@ def send_telegram(name, contact, filename, score, grade):
         }, timeout=10)
 
         if resp.status_code == 200:
-            return True, "Sent"
+            data = resp.json()
+            if data.get("ok"):
+                return True, "Sent"
+            else:
+                return False, f"Telegram API error: {data.get('description', 'Unknown error')}"
         else:
             return False, f"HTTP {resp.status_code}: {resp.text[:200]}"
+    except requests.exceptions.Timeout:
+        return False, "Request timeout — Telegram servers may be slow"
+    except requests.exceptions.ConnectionError:
+        return False, "Connection error — check internet connection"
     except Exception as e:
         return False, str(e)
 
@@ -183,7 +191,7 @@ if st.button("🔍 افحص الآن", use_container_width=True):
                 <h3 style="margin-bottom:8px;">🚀 عايز CV احترافي يتجاوز 85%؟</h3>
                 <p style="opacity:0.9;margin-bottom:16px;">نكتب لك سيرة ذاتية متوافقة 100% مع ATS — توصيل بنفس اليوم</p>
                 <div style="display:flex;justify-content:center;gap:12px;flex-wrap:wrap;">
-                    <a href="https://www.instagram.com/mosaab.cv?igsh=b3VqMDRkYWN2MGRz" target="_blank" 
+                    <a href="https://www.instagram.com/mosaab.cv/" target="_blank"
                        style="background:#E4405F;color:white;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:700;">
                         📱 Instagram
                     </a>
